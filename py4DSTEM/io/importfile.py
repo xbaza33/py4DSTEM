@@ -15,7 +15,7 @@ from py4DSTEM.io.filereaders import (
 from py4DSTEM.io.parsefiletype import _parse_filetype
 
 
-def import_file(filepath: Union[str, pathlib.Path])
+def import_file
 (
     filepath: Union[str, pathlib.Path],
     mem: Optional[str] = "RAM",
