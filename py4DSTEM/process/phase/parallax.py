@@ -2566,13 +2566,13 @@ class Parallax(PhaseReconstruction):
 
     def depth_section(
         self,
-        depth_angstroms=None,
-        use_CTF_fit=True,
-        plot_depth_sections=True,
-        k_info_limit: float = None,
-        k_info_power: float = 1.0,
-        progress_bar=True,
-        **kwargs,
+        depth_angstroms=None, # Specify the depths that you want, pass an np.array
+        use_CTF_fit=True, # This might be the "correction" that Steve was talking about. Will definitely try to toggle this to False and see what happens
+        plot_depth_sections=True, # Looks like we plot the depth sections 
+        k_info_limit: float = None, # This tells you the maximum allowed frequency in butterworth filter (what the heck is a butterworth filter??)
+        k_info_power: float = 1.0, # This tells you the power of the butterworth filter (again, what is this butterworth filer?)
+        progress_bar=True, # Probably just dispays a power bar 
+        **kwargs, # You can pass any number of keyword arguments and **kwargs collects these keyword arguments into a dictionary within the function
     ):
         """
         CTF correction of the BF image using the measured defocus aberration.
@@ -2594,9 +2594,10 @@ class Parallax(PhaseReconstruction):
 
         """
 
-        xp = self._xp
-        asnumpy = self._asnumpy
-
+        xp = self._xp # Don't know what this is for 
+        asnumpy = self._asnumpy # Don't know what this is for 
+        
+        # This raises an error if the object you call doesn't have an attribute with "aberration_C1." Basically, if you haven't ran `aberration_fit()` this will cause an error
         if not hasattr(self, "aberration_C1"):
             raise ValueError(
                 (
@@ -2604,17 +2605,17 @@ class Parallax(PhaseReconstruction):
                     "Please run the `reconstruct()` and `aberration_fit()` functions first."
                 )
             )
-
+        # Basically, if you don't specify the depths that you want, this will specify it for you
         if depth_angstroms is None:
-            depth_angstroms = np.linspace(-256, 256, 33)
-        depth_angstroms = xp.atleast_1d(depth_angstroms)
+            depth_angstroms = np.linspace(-256, 256, 33) # Returns evenly spaced numbers over a specified interval (start_value, stop_value, num_samples_to_generate)
+        depth_angstroms = xp.atleast_1d(depth_angstroms) # Function in NumPy (often mirrored in CuPy) that ensures the input is at least 1-dimensional. It converts scalars to 1-D arrays and leaves higher-dimensional arrays unchanged
 
-        # Fourier coordinates
-        sx, sy = self._scan_sampling
-        nx, ny = self._recon_BF.shape
-        kx = xp.fft.fftfreq(nx, sx)
-        ky = xp.fft.fftfreq(ny, sy)
-        kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2
+        # Fourier coordinates (which represent the frequencies corresponding to the spatial coordinates in the original sample or image)
+        sx, sy = self._scan_sampling # These are the spatial sampling intervals in your scan or image. They represent the sampling intervals in x and y. 
+        nx, ny = self._recon_BF.shape # Perhaps the dimensions of the reconstructed BF image or data 
+        kx = xp.fft.fftfreq(nx, sx) # Fourier coordinates for x direction
+        ky = xp.fft.fftfreq(ny, sy) # Fourier coordinates for y direction
+        kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2 # kx[:, None] reshapes kx to be a column vector. ky[None, :] reshapes ky to be a row vector. This is just kx^2 + ky^2 = kra^2
 
         if use_CTF_fit:
             sin_chi = xp.sin(
