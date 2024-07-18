@@ -15,11 +15,7 @@ from py4DSTEM.io.filereaders import (
 from py4DSTEM.io.parsefiletype import _parse_filetype
 
 
-def import_file(filepath: Union[str, pathlib.Path]):
-    print('Hello world')
-
-
-"""
+def import_file(filepath: Union[str, pathlib.Path])
 (
     filepath: Union[str, pathlib.Path],
     mem: Optional[str] = "RAM",
@@ -27,7 +23,7 @@ def import_file(filepath: Union[str, pathlib.Path]):
     filetype: Optional[str] = None,
     **kwargs,
 ):
-    """ """
+    """ 
     Reader for non-native file formats.
     Parses the filetype, and calls the appropriate reader.
     Supports Gatan DM3/4, some EMPAD file versions, Gatan K2 bin/gtg, and mib
@@ -51,7 +47,7 @@ def import_file(filepath: Union[str, pathlib.Path]):
         (DataCube or Array) returns a DataCube if 4D data is found, otherwise
         returns an Array
 
-    """ """
+    """ 
 
     assert isinstance(
         filepath, (str, pathlib.Path)
@@ -101,4 +97,4 @@ def import_file(filepath: Union[str, pathlib.Path]):
     else:
         raise Exception("Bad filetype!")
 
-    return data  """
+    return data  
