@@ -2706,7 +2706,7 @@ class Parallax(PhaseReconstruction):
 
 
 
-'''
+    '''
     def depth_section(
         self,
         depth_angstroms=None, # Specify the depths that you want, pass an np.array
@@ -2846,7 +2846,7 @@ class Parallax(PhaseReconstruction):
 
         self.clear_device_mem(self._device, self._clear_fft_cache)
         return stack_depth
-'''
+    '''
 
     def _crop_padded_object(
         self,
