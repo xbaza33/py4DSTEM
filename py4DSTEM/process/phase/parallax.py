@@ -2564,7 +2564,7 @@ class Parallax(PhaseReconstruction):
         self.clear_device_mem(self._device, self._clear_fft_cache)
         return self
 
-    def depth_section(
+    def depth_section_steve(
             self,
             depth_angstroms=np.arange(-250, 260, 100),
             plot_depth_sections=True,
@@ -2706,8 +2706,8 @@ class Parallax(PhaseReconstruction):
 
 
 
-    '''
-    def depth_section(
+    
+    def depth_section_with_CTFcorr(
         self,
         depth_angstroms=None, # Specify the depths that you want, pass an np.array
         use_CTF_fit=True, # This might be the "correction" that Steve was talking about. Will definitely try to toggle this to False and see what happens
@@ -2846,8 +2846,136 @@ class Parallax(PhaseReconstruction):
 
         self.clear_device_mem(self._device, self._clear_fft_cache)
         return stack_depth
-    '''
+    
+    def depth_section_wo_CTFcorr(
+        self,
+        depth_angstroms=None, # Specify the depths that you want, pass an np.array
+        plot_depth_sections=True, # Looks like we plot the depth sections 
+        k_info_limit: float = None, # This tells you the maximum allowed frequency in butterworth filter (what the heck is a butterworth filter??)
+        k_info_power: float = 1.0, # This tells you the power of the butterworth filter (again, what is this butterworth filer?)
+        progress_bar=True, # Probably just dispays a power bar 
+        **kwargs, # You can pass any number of keyword arguments and **kwargs collects these keyword arguments into a dictionary within the function
+    ):
+        """
+        CTF correction of the BF image using the measured defocus aberration.
 
+        Parameters
+        ----------
+        depth_angstroms: np.array
+            Specify the depths
+        k_info_limit: float, optional
+            maximum allowed frequency in butterworth filter
+        k_info_power: float, optional
+            power of butterworth filter
+
+
+        Returns
+        -------
+        stack_depth: np.array
+            stack of phase images at different depths with shape [depth Nx Ny]
+
+        """
+
+        xp = self._xp # Don't know what this is for 
+        asnumpy = self._asnumpy # Don't know what this is for 
+        
+        # This raises an error if the object you call doesn't have an attribute with "aberration_C1." Basically, if you haven't ran `aberration_fit()` this will cause an error
+        if not hasattr(self, "aberration_C1"):
+            raise ValueError(
+                (
+                    "Depth sectioning is meant to be ran after alignment and aberration fitting. "
+                    "Please run the `reconstruct()` and `aberration_fit()` functions first."
+                )
+            )
+        # Basically, if you don't specify the depths that you want, this will specify it for you
+        if depth_angstroms is None:
+            depth_angstroms = np.linspace(-256, 256, 33) # Returns evenly spaced numbers over a specified interval (start_value, stop_value, num_samples_to_generate)
+        depth_angstroms = xp.atleast_1d(depth_angstroms) # Function in NumPy (often mirrored in CuPy) that ensures the input is at least 1-dimensional. It converts scalars to 1-D arrays and leaves higher-dimensional arrays unchanged
+
+        # Fourier coordinates (which represent the frequencies corresponding to the spatial coordinates in the original sample or image)
+        sx, sy = self._scan_sampling # These are the spatial sampling intervals in your scan or image. They represent the sampling intervals in x and y. 
+        nx, ny = self._recon_BF.shape # Perhaps the dimensions of the reconstructed BF image or data 
+        kx = xp.fft.fftfreq(nx, sx) # Fourier coordinates for x direction
+        ky = xp.fft.fftfreq(ny, sy) # Fourier coordinates for y direction
+        kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2 # kx[:, None] reshapes kx to be a column vector. ky[None, :] reshapes ky to be a row vector. This is just kx^2 + ky^2 = kra^2. Also, as you can tell from below, this is equivalent to omega in the PCTF.
+
+        # init (creating an array of zeros), stuff in parentheses specifies the shape of the array of zeros 
+        stack_depth = xp.zeros(
+            (depth_angstroms.shape[0], self._recon_BF.shape[0], self._recon_BF.shape[1])
+        )
+
+        # plotting 
+        if plot_depth_sections:
+            num_plots = depth_angstroms.shape[0] # Number of plots determined by the number of "slices"
+            nrows = int(np.sqrt(num_plots)) # Takes the square root of the number of plots and uses that to determine the number of rows (takes the integer value)
+            ncols = int(np.ceil(num_plots / nrows)) # Take the (int value) ceiling of the number of plots divided by the number of rows. Ceiling is the smallest integer greater than or equal to that number. I.e. num_plots = 10, nrows = 3, then num_plots / nrows = 3.3333 -> np.ceil(num_plots / nrows) = 4.0 
+
+            spec = GridSpec(
+                ncols=ncols,
+                nrows=nrows,
+                hspace=0.15,
+                wspace=0.15,
+            )
+
+            figsize = kwargs.pop("figsize", (4 * ncols, 4 * nrows))
+            cmap = kwargs.pop("cmap", "magma")
+
+            fig = plt.figure(figsize=figsize)
+
+        # main loop
+        for a0 in tqdmnd( # tqdmnd is an extension of the tqdm library (progress bar) designed to handle multiple iterators simultaneously. See emdfile on py4dstem home page then search tqdmnd.
+            depth_angstroms.shape[0], # basically like how many "slices" you have. You passed this array into the depth_section function, if not it was defaulted to 33.
+            desc="Depth sectioning ",
+            unit="plane",
+            disable=not progress_bar,
+        ):
+            dz = depth_angstroms[a0] # Changes the z value depending on what "slice" you are on
+
+            # Parallax
+            im_depth = xp.zeros_like(self._recon_BF, dtype=xp.complex64) # array of zeros 
+            dx = -self._probe_angles[:, 0] * dz / self._scan_sampling[0] # self._probe_angles = self._kxy * self._wavelength
+            dy = -self._probe_angles[:, 1] * dz / self._scan_sampling[1] # self._probe_angles = self._kxy * self._wavelength
+            shift_op = xp.exp( 
+                self._qx_shift[None] * dx[:, None, None]
+                + self._qy_shift[None] * dy[:, None, None]
+            ) 
+            im_depth = xp.fft.fft2(self._stack_BF_shifted) * shift_op 
+
+            if k_info_limit is not None:
+                im_depth /= 1 + (kra2**k_info_power) / (
+                    (k_info_limit) ** (2 * k_info_power)
+                )
+
+            stack_depth[a0] = xp.real(xp.fft.ifft2(im_depth)).mean(0)
+
+            if plot_depth_sections:
+                row_index, col_index = np.unravel_index(a0, (nrows, ncols))
+                ax = fig.add_subplot(spec[row_index, col_index])
+
+                cropped_object = self._crop_padded_object(asnumpy(stack_depth[a0]))
+
+                extent = [
+                    0,
+                    self._scan_sampling[1] * cropped_object.shape[1],
+                    self._scan_sampling[0] * cropped_object.shape[0],
+                    0,
+                ]
+
+                ax.imshow(
+                    cropped_object,
+                    extent=extent,
+                    cmap=cmap,
+                    **kwargs,
+                )
+
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_title(f"Depth section: {dz} A")
+
+        self.clear_device_mem(self._device, self._clear_fft_cache)
+        return stack_depth
+
+    
     def _crop_padded_object(
         self,
         padded_object: np.ndarray,
