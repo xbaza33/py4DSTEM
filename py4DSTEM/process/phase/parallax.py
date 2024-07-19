@@ -2615,27 +2615,27 @@ class Parallax(PhaseReconstruction):
         nx, ny = self._recon_BF.shape # Perhaps the dimensions of the reconstructed BF image or data 
         kx = xp.fft.fftfreq(nx, sx) # Fourier coordinates for x direction
         ky = xp.fft.fftfreq(ny, sy) # Fourier coordinates for y direction
-        kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2 # kx[:, None] reshapes kx to be a column vector. ky[None, :] reshapes ky to be a row vector. This is just kx^2 + ky^2 = kra^2
+        kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2 # kx[:, None] reshapes kx to be a column vector. ky[None, :] reshapes ky to be a row vector. This is just kx^2 + ky^2 = kra^2. Also, as you can tell from below, this is equivalent to omega in the PCTF.
 
         if use_CTF_fit:
             sin_chi = xp.sin(
                 self._calculate_CTF((nx, ny), (sx, sy), *self._aberrations_coefs)
             )
         else:
-            sin_chi = xp.sin((xp.pi * self._wavelength * self.aberration_C1) * kra2)
+            sin_chi = xp.sin((xp.pi * self._wavelength * self.aberration_C1) * kra2) # This gives the CTF for the case where defocus is the only aberration. 
 
-        CTF_corr = xp.sign(sin_chi)
-        CTF_corr[0, 0] = 0
+        CTF_corr = xp.sign(sin_chi) # I know this is a CTF correction, but I still just don't know what this is 
+        CTF_corr[0, 0] = 0 # Same for this 
 
-        # init
+        # init (creating an array of zeros)
         stack_depth = xp.zeros(
             (depth_angstroms.shape[0], self._recon_BF.shape[0], self._recon_BF.shape[1])
         )
 
-        # plotting
+        # plotting 
         if plot_depth_sections:
-            num_plots = depth_angstroms.shape[0]
-            nrows = int(np.sqrt(num_plots))
+            num_plots = depth_angstroms.shape[0] # Number of plots determined by the number of "slices"
+            nrows = int(np.sqrt(num_plots)) # This is where I left off last time! 
             ncols = int(np.ceil(num_plots / nrows))
 
             spec = GridSpec(
