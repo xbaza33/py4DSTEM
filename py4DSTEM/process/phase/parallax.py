@@ -2401,22 +2401,22 @@ class Parallax(PhaseReconstruction):
 
         return self
 
-    def _calculate_CTF(self, alpha_shape, sampling, *coefs):
+    def _calculate_CTF(self, alpha_shape, sampling, *coefs): # Maybe alpha_shape has to do with the convergence semi angle. Sampling could be the sampling intervals in x and y
         xp = self._xp
 
         # FFT coordinates
-        sx, sy = sampling
-        qx = xp.fft.fftfreq(alpha_shape[0], sx)
-        qy = xp.fft.fftfreq(alpha_shape[1], sy)
-        qr2 = qx[:, None] ** 2 + qy[None, :] ** 2
+        sx, sy = sampling # sampling intervals in x and y 
+        qx = xp.fft.fftfreq(alpha_shape[0], sx) # Computing discrete fourier transform spatial frequency (cycles/distance)for shape and spacing in x
+        qy = xp.fft.fftfreq(alpha_shape[1], sy) # Computing discrete fourier transform spatial frequency (cycles/distance) for shape and spacing in y
+        qr2 = qx[:, None] ** 2 + qy[None, :] ** 2 # squaring those spatial frequencies and adding them, storing in qr2
 
-        alpha = xp.sqrt(qr2) * self._wavelength
-        theta = xp.arctan2(qy[None, :], qx[:, None])
+        alpha = xp.sqrt(qr2) * self._wavelength # cycles?  semi-angle? 
+        theta = xp.arctan2(qy[None, :], qx[:, None]) 
 
         # Aberration basis
-        aberrations_basis = xp.zeros((alpha.size, self._aberrations_num))
-        for a0 in range(self._aberrations_num):
-            m, n, a = self._aberrations_mn[a0]
+        aberrations_basis = xp.zeros((alpha.size, self._aberrations_num)) # array of zeros 
+        for a0 in range(self._aberrations_num): # self._aberrations_num = self._aberrations_mn.shape[0] = np.array(mn).shape = np.array(fit_aberrations_mn).shape ? ; shape of aberration fit or something
+            m, n, a = self._aberrations_mn[a0] 
             if n == 0:
                 # Radially symmetric basis
                 aberrations_basis[:, a0] = (alpha ** (m + 1) / (m + 1)).ravel()
@@ -2565,6 +2565,149 @@ class Parallax(PhaseReconstruction):
         return self
 
     def depth_section(
+            self,
+            depth_angstroms=np.arange(-250, 260, 100),
+            plot_depth_sections=True,
+            k_info_limit: float = None,
+            k_info_power: float = 1.0,
+            progress_bar=True,
+            **kwargs,
+        ):
+            """
+            CTF correction of the BF image using the measured defocus aberration.
+    
+            Parameters
+            ----------
+            depth_angstroms: np.array
+                Specify the depths
+            k_info_limit: float, optional
+                maximum allowed frequency in butterworth filter
+            k_info_power: float, optional
+                power of butterworth filter
+    
+    
+            Returns
+            -------
+            stack_depth: np.array
+                stack of phase images at different depths with shape [depth Nx Ny]
+    
+            """
+    
+            xp = self._xp
+            asnumpy = self._asnumpy
+            depth_angstroms = xp.atleast_1d(depth_angstroms)
+    
+            if not hasattr(self, "aberration_C1"):
+                raise ValueError(
+                    (
+                        "Depth sectioning is meant to be ran after alignment and aberration fitting. "
+                        "Please run the `reconstruct()` and `aberration_fit()` functions first."
+                    )
+                )
+    
+            # Fourier coordinates
+            kx = xp.fft.fftfreq(self._recon_BF.shape[0], self._scan_sampling[0])
+            ky = xp.fft.fftfreq(self._recon_BF.shape[1], self._scan_sampling[1])
+            kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2
+    
+            # information limit
+            if k_info_limit is not None:
+                k_filt = 1 / (
+                    1 + (kra2**k_info_power) / ((k_info_limit) ** (2 * k_info_power))
+                )
+    
+            # init
+            stack_depth = xp.zeros(
+                (depth_angstroms.shape[0], self._recon_BF.shape[0], self._recon_BF.shape[1])
+            )
+    
+            # plotting
+            if plot_depth_sections:
+                num_plots = depth_angstroms.shape[0]
+                nrows = int(np.sqrt(num_plots))
+                ncols = int(np.ceil(num_plots / nrows))
+    
+                spec = GridSpec(
+                    ncols=ncols,
+                    nrows=nrows,
+                    hspace=0.15,
+                    wspace=0.15,
+                )
+    
+                figsize = kwargs.pop("figsize", (4 * ncols, 4 * nrows))
+                cmap = kwargs.pop("cmap", "magma")
+    
+                fig = plt.figure(figsize=figsize)
+    
+            # main loop
+            for a0 in tqdmnd(
+                depth_angstroms.shape[0],
+                desc="Depth sectioning ",
+                unit="plane",
+                disable=not progress_bar,
+            ):
+                dz = depth_angstroms[a0]
+    
+                # Parallax
+                im_depth = xp.zeros_like(self._recon_BF, dtype="complex")
+                for a1 in range(self._stack_BF_shifted.shape[0]):
+                    dx = self._probe_angles[a1, 0] * dz
+                    dy = self._probe_angles[a1, 1] * dz
+                    im_depth += xp.fft.fft2(self._stack_BF_shifted[a1]) * xp.exp(
+                        self._qx_shift * dx + self._qy_shift * dy
+                    )
+    
+                # CTF correction
+                sin_chi = xp.sin(
+                    (xp.pi * self._wavelength * (self.aberration_C1 + dz)) * kra2
+                )
+                CTF_corr = xp.sign(sin_chi)
+                CTF_corr[0, 0] = 0
+                if k_info_limit is not None:
+                    CTF_corr *= k_filt
+    
+                # apply correction to mean reconstructed BF image
+                stack_depth[a0] = (
+                    xp.real(xp.fft.ifft2(im_depth * CTF_corr))
+                    / self._stack_BF_shifted.shape[0]
+                )
+    
+                if plot_depth_sections:
+                    row_index, col_index = np.unravel_index(a0, (nrows, ncols))
+                    ax = fig.add_subplot(spec[row_index, col_index])
+    
+                    cropped_object = self._crop_padded_object(asnumpy(stack_depth[a0]))
+    
+                    extent = [
+                        0,
+                        self._scan_sampling[1] * cropped_object.shape[1],
+                        self._scan_sampling[0] * cropped_object.shape[0],
+                        0,
+                    ]
+    
+                    ax.imshow(
+                        cropped_object,
+                        extent=extent,
+                        cmap=cmap,
+                        **kwargs,
+                    )
+    
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    ax.set_title(f"Depth section: {dz}A")
+    
+            if self._device == "gpu":
+                xp = self._xp
+                xp._default_memory_pool.free_all_blocks()
+                xp.clear_memo()
+    
+            return stack_depth
+
+
+
+
+'''
+    def depth_section(
         self,
         depth_angstroms=None, # Specify the depths that you want, pass an np.array
         use_CTF_fit=True, # This might be the "correction" that Steve was talking about. Will definitely try to toggle this to False and see what happens
@@ -2618,16 +2761,17 @@ class Parallax(PhaseReconstruction):
         kra2 = (kx[:, None]) ** 2 + (ky[None, :]) ** 2 # kx[:, None] reshapes kx to be a column vector. ky[None, :] reshapes ky to be a row vector. This is just kx^2 + ky^2 = kra^2. Also, as you can tell from below, this is equivalent to omega in the PCTF.
 
         if use_CTF_fit:
+            # calculates the ctf, takes parameters _calcualte_CTF(self, alpha_shape, sampling, *coefs)
             sin_chi = xp.sin(
-                self._calculate_CTF((nx, ny), (sx, sy), *self._aberrations_coefs)
-            )
+                self._calculate_CTF((nx, ny), (sx, sy), *self._aberrations_coefs) 
+            ) 
         else:
-            sin_chi = xp.sin((xp.pi * self._wavelength * self.aberration_C1) * kra2) # This gives the CTF for the case where defocus is the only aberration. 
+            sin_chi = xp.sin((xp.pi * self._wavelength * self.aberration_C1) * kra2) # This gives the CTF for the case where defocus is the only aberration. CTF = sin(pi * lambda * C_1 * omega^2)
 
-        CTF_corr = xp.sign(sin_chi) # I know this is a CTF correction, but I still just don't know what this is 
-        CTF_corr[0, 0] = 0 # Same for this 
+        CTF_corr = xp.sign(sin_chi) # I know this is a CTF correction by the name of it. It takes whatever sin_chi is and returns the sign of each element in an array. 1 for + num, -1 for - num, and 0 for zeros.
+        CTF_corr[0, 0] = 0 # replaces the very first element with 0 
 
-        # init (creating an array of zeros)
+        # init (creating an array of zeros), stuff in parentheses specifies the shape of the array of zeros 
         stack_depth = xp.zeros(
             (depth_angstroms.shape[0], self._recon_BF.shape[0], self._recon_BF.shape[1])
         )
@@ -2635,8 +2779,8 @@ class Parallax(PhaseReconstruction):
         # plotting 
         if plot_depth_sections:
             num_plots = depth_angstroms.shape[0] # Number of plots determined by the number of "slices"
-            nrows = int(np.sqrt(num_plots)) # This is where I left off last time! 
-            ncols = int(np.ceil(num_plots / nrows))
+            nrows = int(np.sqrt(num_plots)) # Takes the square root of the number of plots and uses that to determine the number of rows (takes the integer value)
+            ncols = int(np.ceil(num_plots / nrows)) # Take the (int value) ceiling of the number of plots divided by the number of rows. Ceiling is the smallest integer greater than or equal to that number. I.e. num_plots = 10, nrows = 3, then num_plots / nrows = 3.3333 -> np.ceil(num_plots / nrows) = 4.0 
 
             spec = GridSpec(
                 ncols=ncols,
@@ -2651,22 +2795,22 @@ class Parallax(PhaseReconstruction):
             fig = plt.figure(figsize=figsize)
 
         # main loop
-        for a0 in tqdmnd(
-            depth_angstroms.shape[0],
+        for a0 in tqdmnd( # tqdmnd is an extension of the tqdm library (progress bar) designed to handle multiple iterators simultaneously. See emdfile on py4dstem home page then search tqdmnd.
+            depth_angstroms.shape[0], # basically like how many "slices" you have. You passed this array into the depth_section function, if not it was defaulted to 33.
             desc="Depth sectioning ",
             unit="plane",
             disable=not progress_bar,
         ):
-            dz = depth_angstroms[a0]
+            dz = depth_angstroms[a0] # Changes the z value depending on what "slice" you are on
 
             # Parallax
-            im_depth = xp.zeros_like(self._recon_BF, dtype=xp.complex64)
-            dx = -self._probe_angles[:, 0] * dz / self._scan_sampling[0]
-            dy = -self._probe_angles[:, 1] * dz / self._scan_sampling[1]
-            shift_op = xp.exp(
+            im_depth = xp.zeros_like(self._recon_BF, dtype=xp.complex64) # array of zeros 
+            dx = -self._probe_angles[:, 0] * dz / self._scan_sampling[0] # self._probe_angles = self._kxy * self._wavelength
+            dy = -self._probe_angles[:, 1] * dz / self._scan_sampling[1] # self._probe_angles = self._kxy * self._wavelength
+            shift_op = xp.exp( 
                 self._qx_shift[None] * dx[:, None, None]
                 + self._qy_shift[None] * dy[:, None, None]
-            )
+            ) 
             im_depth = xp.fft.fft2(self._stack_BF_shifted) * shift_op * CTF_corr
 
             if k_info_limit is not None:
@@ -2702,6 +2846,7 @@ class Parallax(PhaseReconstruction):
 
         self.clear_device_mem(self._device, self._clear_fft_cache)
         return stack_depth
+'''
 
     def _crop_padded_object(
         self,
