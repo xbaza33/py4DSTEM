@@ -2807,7 +2807,7 @@ class Parallax(PhaseReconstruction):
             im_depth = xp.zeros_like(self._recon_BF, dtype=xp.complex64) # array of zeros 
             dx = -self._probe_angles[:, 0] * dz / self._scan_sampling[0] # self._probe_angles = self._kxy * self._wavelength
             dy = -self._probe_angles[:, 1] * dz / self._scan_sampling[1] # self._probe_angles = self._kxy * self._wavelength
-            shift_op = xp.exp( 
+            shift_op = xp.exp( # Maybe this is like ctf_t in acbf notebook
                 self._qx_shift[None] * dx[:, None, None]
                 + self._qy_shift[None] * dy[:, None, None]
             ) 
